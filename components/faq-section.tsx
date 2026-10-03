@@ -16,10 +16,10 @@ export function FaqSection() {
               This tool uses the <code className="text-xs bg-muted px-1 py-0.5 rounded">@opendocsg/pdf2md</code> library to convert PDF documents to Markdown.
             </p>
             <ol className="list-decimal pl-5 space-y-1">
-              <li>Your PDF file is processed entirely in your browser</li>
+              <li>Select or drop one or more PDF files, processed entirely in your browser</li>
               <li>The content is extracted, including text and structure</li>
               <li>The extracted content is converted to Markdown syntax</li>
-              <li>The resulting Markdown is displayed for you to copy or download</li>
+              <li>Copy or download each Markdown result, or download all successful results as a ZIP</li>
             </ol>
             <p className="mt-2">
               <strong>Your files never leave your device</strong> - all processing happens locally.
@@ -68,7 +68,7 @@ export function FaqSection() {
           </AccordionTrigger>
           <AccordionContent className="text-sm text-muted-foreground pb-4">
             <p>
-              The maximum file size is 10MB. Since all processing happens in your browser, larger files may cause performance issues.
+              The maximum file size is 10MB per PDF. You can select multiple files; they are converted one at a time in your browser. If one file fails, the remaining files still continue.
             </p>
           </AccordionContent>
         </AccordionItem>

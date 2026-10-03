@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { FileUploader } from "@/components/file-uploader"
 import { MarkdownPreview } from "@/components/markdown-preview"
 import { Button } from "@/components/ui/button"
@@ -9,29 +9,75 @@ import { FileText, Code, Download, Copy, Check } from "lucide-react"
 import { FaqSection } from "@/components/faq-section"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { GitHubStarButton } from "@/components/github-star-button"
+import type { ConversionResult } from "@/lib/batch-types"
+import {
+  downloadMarkdown,
+  downloadMarkdownZip,
+  getMarkdownDownloads,
+  type MarkdownDownload
+} from "@/lib/markdown-download"
 
 export default function Home() {
-  const [markdown, setMarkdown] = useState<string | null>(null)
+  const [results, setResults] = useState<ConversionResult[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [isConverting, setIsConverting] = useState(false)
-  const [fileName, setFileName] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const downloads = getMarkdownDownloads(results)
+  const selectedResult = results.find((result) => result.id === selectedId)
+  const markdown = selectedResult?.markdown ?? null
+  const fileName = selectedResult?.fileName ?? null
+  const selectedDownload = downloads.find(
+    (download) => download.id === selectedId
+  )
 
-  const handleCopy = async () => {
-    if (!markdown) return
-    await navigator.clipboard.writeText(markdown)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+    },
+    []
+  )
+
+  const resetActions = () => {
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+    setCopied(false)
+    setActionError(null)
   }
 
-  const handleDownload = () => {
-    if (!markdown || !fileName) return
-    const element = document.createElement("a")
-    const file = new Blob([markdown], { type: "text/markdown" })
-    element.href = URL.createObjectURL(file)
-    element.download = fileName.replace(/\.pdf$/i, "") + ".md"
-    document.body.appendChild(element)
-    element.click()
-    document.body.removeChild(element)
+  const handleCopy = async () => {
+    if (markdown === null) return
+    setActionError(null)
+    try {
+      await navigator.clipboard.writeText(markdown)
+      setCopied(true)
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setActionError(
+        "Unable to copy Markdown. You can select and copy the text in the Markdown tab."
+      )
+    }
+  }
+
+  const handleDownload = (download: MarkdownDownload) => {
+    setActionError(null)
+    try {
+      downloadMarkdown(download)
+    } catch {
+      setActionError("Unable to download this Markdown file. Please try again.")
+    }
+  }
+
+  const handleDownloadAll = () => {
+    setActionError(null)
+    try {
+      downloadMarkdownZip(downloads)
+    } catch {
+      setActionError(
+        "Unable to create or download the ZIP archive. Try downloading files individually."
+      )
+    }
   }
 
   return (
@@ -50,14 +96,17 @@ export default function Home() {
             </h1>
 
             <p className="text-base text-muted-foreground max-w-md mb-8">
-              Convert PDF documents to clean Markdown. Files are processed locally in your browser.
+              Convert PDF documents to clean Markdown. Files are processed
+              locally in your browser.
             </p>
 
             <div className="flex items-center gap-3">
               <Button
                 className="h-9 px-4 text-sm font-medium"
                 onClick={() => {
-                  document.querySelector('#file-uploader')?.scrollIntoView({ behavior: 'smooth' })
+                  document
+                    .querySelector("#file-uploader")
+                    ?.scrollIntoView({ behavior: "smooth" })
                 }}
               >
                 Convert PDF
@@ -70,9 +119,19 @@ export default function Home() {
         {/* File Uploader */}
         <section className="mb-12" id="file-uploader">
           <FileUploader
-            onConversionComplete={(result, file) => {
-              setMarkdown(result)
-              setFileName(file.name)
+            onBatchStart={() => {
+              setResults([])
+              setSelectedId(null)
+              resetActions()
+            }}
+            onConversionComplete={(batchResults) => {
+              setResults(batchResults)
+              setSelectedId(
+                batchResults.find(
+                  (result) => result.markdown !== null && result.error === null
+                )?.id ?? null
+              )
+              resetActions()
             }}
             isConverting={isConverting}
             setIsConverting={setIsConverting}
@@ -80,15 +139,96 @@ export default function Home() {
         </section>
 
         {/* Result */}
-        {markdown && (
-          <section className="mb-16">
-            <div className="flex justify-between items-center mb-4">
+        {results.length > 0 && (
+          <section className="mb-8" aria-label="Conversion results">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <div>
                 <h2 className="text-lg font-medium text-foreground">
-                  Result
+                  Batch results
                 </h2>
-                <p className="text-sm text-muted-foreground">
-                  {fileName?.replace(/\.pdf$/i, '')}
+                <p className="text-sm text-muted-foreground" role="status">
+                  {downloads.length} of {results.length} files converted
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={handleDownloadAll}
+                disabled={downloads.length === 0}
+              >
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Download all (.zip)
+              </Button>
+            </div>
+            <ul className="rounded-lg border border-border divide-y divide-border overflow-hidden">
+              {results.map((result) => {
+                const download = downloads.find(
+                  (entry) => entry.id === result.id
+                )
+                return (
+                  <li
+                    key={result.id}
+                    className={`flex flex-wrap items-center gap-3 p-4 ${selectedId === result.id ? "bg-muted/50" : "bg-card"}`}
+                  >
+                    <div className="min-w-0 flex-1 basis-40">
+                      <p className="text-sm font-medium break-all">
+                        {result.fileName}
+                      </p>
+                      {download ? (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Converted
+                          {result.markdown === "" ? " · Empty Markdown" : ""}
+                        </p>
+                      ) : (
+                        <p className="text-sm text-destructive mt-1 break-words">
+                          {result.error ??
+                            "Conversion did not produce Markdown."}
+                        </p>
+                      )}
+                    </div>
+                    {download && (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          aria-pressed={selectedId === result.id}
+                          aria-label={`Preview ${result.fileName}`}
+                          onClick={() => {
+                            setSelectedId(result.id)
+                            resetActions()
+                          }}
+                        >
+                          {selectedId === result.id ? "Selected" : "Preview"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          aria-label={`Download ${result.fileName} as Markdown`}
+                          onClick={() => handleDownload(download)}
+                        >
+                          <Download className="mr-1.5 h-3.5 w-3.5" /> .md
+                        </Button>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )}
+
+        {actionError && (
+          <p role="alert" className="mb-6 text-sm text-destructive">
+            {actionError}
+          </p>
+        )}
+
+        {markdown !== null && selectedDownload && (
+          <section className="mb-16">
+            <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+              <div className="min-w-0">
+                <h2 className="text-lg font-medium text-foreground">Result</h2>
+                <p className="text-sm text-muted-foreground break-all">
+                  {fileName?.replace(/\.pdf$/i, "")}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -112,7 +252,7 @@ export default function Home() {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={handleDownload}
+                  onClick={() => handleDownload(selectedDownload)}
                   className="h-8 px-3 text-sm"
                 >
                   <Download className="mr-1.5 h-3.5 w-3.5" />
@@ -140,13 +280,21 @@ export default function Home() {
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="preview" className="p-5">
-                  <MarkdownPreview markdown={markdown} />
+                  {markdown === "" ? (
+                    <p className="text-sm text-muted-foreground">
+                      This PDF produced an empty Markdown file.
+                    </p>
+                  ) : (
+                    <MarkdownPreview markdown={markdown} />
+                  )}
                 </TabsContent>
                 <TabsContent value="markdown">
                   <ScrollArea className="h-[500px] w-full">
                     <div className="p-5">
                       <pre className="text-sm font-mono text-foreground/80 overflow-x-auto">
-                        <code className="whitespace-pre-wrap [overflow-wrap:anywhere]">{markdown}</code>
+                        <code className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                          {markdown}
+                        </code>
                       </pre>
                     </div>
                   </ScrollArea>
